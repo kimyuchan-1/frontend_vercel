@@ -87,8 +87,23 @@ export default function SuggestionDetailClient({ suggestion: initialSuggestion }
     fetchComments();
   }, [suggestion.id]);
 
-  // 좋아요 토글
+  // Optimistic UI update for like button:
+  // 1. Immediately update UI state before API call (optimistic update)
+  // 2. Store previous state for rollback on error
+  // 3. Make API call to persist change
+  // 4. Update with server response or rollback on error
+  // This provides instant feedback while maintaining data consistency
   const toggleLike = async () => {
+    const previousLikeCount = suggestion.like_count;
+    const previousIsLiked = suggestion.is_liked;
+    
+    // Optimistic update: immediately update UI
+    setSuggestion(prev => ({
+      ...prev,
+      like_count: prev.is_liked ? Math.max(0, prev.like_count - 1) : prev.like_count + 1,
+      is_liked: !prev.is_liked
+    }));
+    
     try {
       const response = await fetch(`/api/suggestions/${suggestion.id}/like`, {
         method: 'POST',
@@ -97,27 +112,99 @@ export default function SuggestionDetailClient({ suggestion: initialSuggestion }
 
       if (response.ok) {
         const data = await response.json();
+        // Update with actual server response
         setSuggestion(prev => ({
           ...prev,
-          like_count: data.liked ? prev.like_count + 1 : Math.max(0, prev.like_count - 1),
+          like_count: data.liked ? previousLikeCount + 1 : Math.max(0, previousLikeCount - 1),
           is_liked: data.liked
         }));
-      } else if (response.status === 401) {
-        alert('로그인이 필요합니다.');
+      } else {
+        // Rollback on error
+        setSuggestion(prev => ({
+          ...prev,
+          like_count: previousLikeCount,
+          is_liked: previousIsLiked
+        }));
+        
+        if (response.status === 401) {
+          alert('로그인이 필요합니다.');
+        } else {
+          alert('좋아요 처리에 실패했습니다.');
+        }
       }
     } catch (error) {
       console.error('좋아요 처리 실패:', error);
+      
+      // Rollback on error
+      setSuggestion(prev => ({
+        ...prev,
+        like_count: previousLikeCount,
+        is_liked: previousIsLiked
+      }));
+      
       alert('좋아요 처리 중 오류가 발생했습니다.');
     }
   };
 
-  // 댓글 작성
+  // Optimistic UI update for comment submission:
+  // 1. Create temporary comment with client-side data
+  // 2. Immediately add to UI for instant feedback
+  // 3. Clear input for better UX
+  // 4. Make API call to persist
+  // 5. Fetch fresh data on success or rollback on error
   const handleCommentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!newComment.trim()) return;
 
     setCommentLoading(true);
+    
+    // Create optimistic comment
+    const optimisticComment: Comment = {
+      id: Date.now(), // Temporary ID
+      content: newComment,
+      created_at: new Date().toISOString(),
+      user: currentUser ? {
+        id: currentUser.id,
+        name: currentUser.name,
+      } : {
+        id: 0,
+        name: '익명'
+      },
+      parent_id: replyTo ?? undefined,
+      replies: []
+    };
+    
+    // Store previous state for rollback
+    const previousComments = [...comments];
+    const previousCommentCount = suggestion.comment_count;
+    
+    // Optimistic update: immediately add comment to UI
+    if (replyTo) {
+      // Add as reply
+      setComments(prevComments => 
+        prevComments.map(comment => 
+          comment.id === replyTo 
+            ? { ...comment, replies: [...(comment.replies || []), optimisticComment] }
+            : comment
+        )
+      );
+    } else {
+      // Add as top-level comment
+      setComments(prevComments => [...prevComments, optimisticComment]);
+    }
+    
+    setSuggestion(prev => ({
+      ...prev,
+      comment_count: (prev.comment_count ?? 0) + 1
+    }));
+    
+    // Clear input immediately for better UX
+    const submittedComment = newComment;
+    setNewComment('');
+    const submittedReplyTo = replyTo;
+    setReplyTo(null);
+    
     try {
       const response = await fetch(`/api/suggestions/${suggestion.id}/comments`, {
         method: 'POST',
@@ -126,34 +213,57 @@ export default function SuggestionDetailClient({ suggestion: initialSuggestion }
         },
         credentials: 'include',
         body: JSON.stringify({
-          content: newComment,
-          parent_id: replyTo
+          content: submittedComment,
+          parent_id: submittedReplyTo
         })
       });
 
       if (response.ok) {
-        setNewComment('');
-        setReplyTo(null);
+        // Fetch fresh comments to replace optimistic update with real data
         await fetchComments();
+      } else {
+        // Rollback on error
+        setComments(previousComments);
         setSuggestion(prev => ({
           ...prev,
-          comment_count: (prev.comment_count ?? 0) + 1
+          comment_count: previousCommentCount
         }));
-      } else if (response.status === 401) {
-        alert('로그인이 필요합니다.');
-      } else {
-        const errorData = await response.json();
-        alert(errorData.error || '댓글 작성에 실패했습니다.');
+        
+        // Restore input
+        setNewComment(submittedComment);
+        setReplyTo(submittedReplyTo);
+        
+        if (response.status === 401) {
+          alert('로그인이 필요합니다.');
+        } else {
+          const errorData = await response.json();
+          alert(errorData.error || '댓글 작성에 실패했습니다.');
+        }
       }
     } catch (error) {
       console.error('댓글 작성 실패:', error);
+      
+      // Rollback on error
+      setComments(previousComments);
+      setSuggestion(prev => ({
+        ...prev,
+        comment_count: previousCommentCount
+      }));
+      
+      // Restore input
+      setNewComment(submittedComment);
+      setReplyTo(submittedReplyTo);
+      
       alert('댓글 작성 중 오류가 발생했습니다.');
     } finally {
       setCommentLoading(false);
     }
   };
 
-  // 게시글 삭제
+  // Cache-busting navigation strategy:
+  // After successful deletion, redirect to board list
+  // With dynamic rendering enabled on /board page, it will always fetch fresh data
+  // No need for cache-busting query parameter anymore
   const handleDeleteSuggestion = async () => {
     if (!confirm('정말 이 건의사항을 삭제하시겠습니까?')) return;
 
@@ -165,6 +275,7 @@ export default function SuggestionDetailClient({ suggestion: initialSuggestion }
 
       if (response.ok) {
         alert('건의사항이 삭제되었습니다.');
+        // Navigate to board list - will fetch fresh data due to dynamic rendering
         router.push('/board');
       } else {
         const errorData = await response.json();

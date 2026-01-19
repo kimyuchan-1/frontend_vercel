@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { backendClient } from "@/lib/backendClient";
+import { transformSortParameter } from "@/lib/sortTransform";
 
 function parseIntSafe(v: string | null, fallback: number) {
   const n = Number(v);
@@ -23,16 +25,13 @@ export async function GET(request: NextRequest) {
     const status = (searchParams.get("status") ?? "").trim();
     const type = (searchParams.get("type") ?? "").trim();
     const region = (searchParams.get("region") ?? "").trim();
-    const sort = (searchParams.get("sort") ?? "latest").trim();
+    const sortBy = (searchParams.get("sortBy") ?? "latest").trim();
 
     // 백엔드 API 호출
     const params: Record<string, any> = {
       page: page - 1, // Spring은 0-based
       size,
-      sort: sort === "popular" ? "likeCount,desc" : 
-            sort === "priority" ? "priorityScore,desc" : 
-            sort === "status" ? "status,asc" : 
-            "createdAt,desc",
+      sort: transformSortParameter(sortBy),
     };
 
     if (status && status !== "ALL") params.status = status;
@@ -131,6 +130,18 @@ export async function POST(request: NextRequest) {
     });
 
     const item = response.data;
+
+    // Cache invalidation strategy for CREATE operations:
+    // - Invalidate board list cache to show new post immediately
+    // - New post will appear when user navigates back to /board
+    // - Graceful error handling: creation succeeds even if cache invalidation fails
+    try {
+      revalidatePath('/board', 'page');
+      console.log('Cache invalidated for /board after post creation');
+    } catch (revalidateError) {
+      // Log error but don't fail the request
+      console.error('Cache revalidation error:', revalidateError);
+    }
 
     // 응답을 프론트엔드 형식으로 변환
     const result = {

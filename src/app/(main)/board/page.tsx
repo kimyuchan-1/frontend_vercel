@@ -4,8 +4,11 @@ import BoardFilters from '@/components/board/BoardFilters';
 import BoardPagination from '@/components/board/BoardPagination';
 import { Suggestion } from '@/features/board/types';
 
-// ISR: Revalidate every 60 seconds
-export const revalidate = 60;
+// Dynamic rendering: Always fetch fresh data from the server
+// This ensures create/delete operations are immediately reflected
+// Trade-off: Slightly slower page loads, but always up-to-date data
+export const revalidate = 0; // Disable ISR cache for this page
+export const dynamic = 'force-dynamic'; // Force dynamic rendering
 
 interface PageProps {
   searchParams: Promise<{
@@ -14,7 +17,7 @@ interface PageProps {
     status?: string;
     type?: string;
     region?: string;
-    sort?: string;
+    sortBy?: string;
   }>;
 }
 
@@ -24,7 +27,7 @@ async function getSuggestions(params: {
   status?: string;
   type?: string;
   region?: string;
-  sort?: string;
+  sortBy?: string;
 }) {
   try {
     const searchParams = new URLSearchParams({
@@ -34,7 +37,7 @@ async function getSuggestions(params: {
       status: params.status && params.status !== 'ALL' ? params.status : '',
       type: params.type && params.type !== 'ALL' ? params.type : '',
       region: params.region && params.region !== 'ALL' ? params.region : '',
-      sort: params.sort || 'latest'
+      sortBy: params.sortBy || 'latest'
     });
 
     // Remove empty params
@@ -45,8 +48,13 @@ async function getSuggestions(params: {
     });
 
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    
+    // Dynamic fetching strategy:
+    // - cache: 'no-store' - Always fetch fresh data from backend, no caching
+    // - This ensures create/delete/update operations are immediately visible
+    // - Combined with revalidatePath() calls in mutation APIs for consistency
     const response = await fetch(`${baseUrl}/api/suggestions?${searchParams}`, {
-      next: { revalidate: 60 }, // ISR: Cache for 60 seconds
+      cache: 'no-store', // Disable caching completely
       headers: {
         'Content-Type': 'application/json',
       },
@@ -132,7 +140,7 @@ export default async function BoardPage({ searchParams }: PageProps) {
                 status: params.status || 'ALL',
                 type: params.type || 'ALL',
                 region: params.region || 'ALL',
-                sortBy: params.sort || 'latest'
+                sortBy: params.sortBy || 'latest'
               }}
             />
           </div>

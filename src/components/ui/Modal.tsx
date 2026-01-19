@@ -122,8 +122,8 @@ export function Modal({
                       variant="ghost"
                       size="sm"
                       onClick={onClose}
-                      className="ml-4 p-2"
-                      aria-label="Close modal"
+                      className="ml-4 p-2 hover:cursor-pointer"
+                      aria-label="Close modal "
                     >
                       <XMarkIcon className="h-5 w-5" aria-hidden="true" />
                     </Button>

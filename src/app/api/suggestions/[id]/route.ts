@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { revalidatePath } from "next/cache";
 import { backendClient } from "@/lib/backendClient";
 
 function parseIntStrict(v: string) {
@@ -120,6 +121,20 @@ export async function PUT(
       return NextResponse.json({ error: "건의사항을 찾을 수 없습니다." }, { status: 404 });
     }
 
+    // Cache invalidation strategy for UPDATE operations:
+    // - Invalidate detail page cache to show updated content immediately
+    // - Invalidate board list cache to reflect changes in list view
+    // - Graceful error handling: log errors but don't block the user operation
+    // - If cache invalidation fails, ISR will still revalidate after 60 seconds
+    try {
+      revalidatePath(`/board/${id}`);
+      revalidatePath('/board');
+      console.log(`Cache invalidated for /board/${id} and /board`);
+    } catch (revalidateError) {
+      // Log error but don't fail the request
+      console.error('Cache revalidation error:', revalidateError);
+    }
+
     return NextResponse.json(transformSuggestion(item));
   } catch (error: any) {
     console.error("Suggestion PUT error:", error?.response?.data ?? error.message);
@@ -150,6 +165,20 @@ export async function DELETE(
     await backendClient.delete(`/api/suggestions/${suggestionId}`, {
       headers: { Cookie: cookieHeader },
     });
+
+    // Cache invalidation strategy for DELETE operations:
+    // - Call revalidatePath with 'page' type to invalidate all route segments
+    // - Invalidate both board list and detail page caches
+    // - Graceful error handling: deletion succeeds even if cache invalidation fails
+    // - Client-side uses cache-busting query parameter for additional safety
+    try {
+      revalidatePath('/board', 'page');
+      revalidatePath(`/board/${id}`, 'page');
+      console.log(`Cache invalidated for /board and /board/${id}`);
+    } catch (revalidateError) {
+      // Log error but don't fail the request
+      console.error('Cache revalidation error:', revalidateError);
+    }
 
     return NextResponse.json({ message: "건의사항이 삭제되었습니다." });
   } catch (error: any) {

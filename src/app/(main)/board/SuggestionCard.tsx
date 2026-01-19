@@ -24,18 +24,32 @@ export default function SuggestionCard(props: {
       if (isLiking) return;
       
       setIsLiking(true);
+      const previousCount = likeCount;
+      
+      // Optimistic update: immediately update UI
+      setLikeCount(prev => prev + 1);
+      
       try {
         const response = await fetch(`/api/suggestions/${suggestion.id}/like`, {
           method: 'POST',
           credentials: 'include'
         });
 
-        if (response.ok) {
-          // Optimistically update the like count
-          setLikeCount(prev => prev + 1);
+        if (!response.ok) {
+          // Rollback on error
+          setLikeCount(previousCount);
+          
+          if (response.status === 401) {
+            alert('로그인이 필요합니다.');
+          } else {
+            alert('좋아요 처리에 실패했습니다.');
+          }
         }
       } catch (error) {
         console.error('좋아요 처리 실패:', error);
+        // Rollback on error
+        setLikeCount(previousCount);
+        alert('좋아요 처리 중 오류가 발생했습니다.');
       } finally {
         setIsLiking(false);
       }

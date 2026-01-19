@@ -108,6 +108,7 @@ export default function CreateSuggestionPage() {
       if (response.ok) {
         const result = await response.json();
         alert('건의사항이 성공적으로 등록되었습니다.');
+        // Navigate to detail page first, then user can go back to list with fresh data
         router.push(`/board/${result.id}`);
       } else {
         const error = await response.json();
@@ -130,7 +131,7 @@ export default function CreateSuggestionPage() {
           <Button
             onClick={() => router.push("/board")}
             variant="ghost"
-            className="flex items-center gap-2"
+            className="flex items-center gap-2 hover:cursor-pointer"
           >
             <FaArrowLeft className="w-4 h-4" />
             목록으로 돌아가기
@@ -250,7 +251,7 @@ export default function CreateSuggestionPage() {
               type="button"
               onClick={() => router.back()}
               variant="outline"
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 hover:cursor-pointer"
             >
               <FaTimes className="w-4 h-4" />
               취소
@@ -260,7 +261,7 @@ export default function CreateSuggestionPage() {
               disabled={loading}
               variant="primary"
               loading={loading}
-              className="flex items-center gap-2"
+              className="flex items-center gap-2 hover:cursor-pointer"
             >
               <FaSave className="w-4 h-4" />
               건의사항 등록

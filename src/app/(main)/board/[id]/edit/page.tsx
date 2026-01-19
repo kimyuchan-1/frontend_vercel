@@ -132,6 +132,19 @@ export default function EditSuggestionPage() {
 
       if (response.ok) {
         alert('건의사항이 성공적으로 수정되었습니다.');
+        
+        // Refresh router cache before navigation
+        try {
+          router.refresh();
+          
+          // Small delay to ensure refresh completes
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (refreshError) {
+          // Log error but proceed with navigation
+          console.error('Router refresh error:', refreshError);
+        }
+        
+        // Navigate to detail page
         router.push(`/board/${suggestionId}`);
       } else {
         const error = await response.json();

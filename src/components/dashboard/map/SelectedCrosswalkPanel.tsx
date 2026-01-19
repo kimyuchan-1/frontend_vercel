@@ -215,7 +215,7 @@ export function SelectedCrosswalkPanel(props: {
 
           <button
             onClick={onClose}
-            className="shrink-0 rounded-full border px-3 py-1.5 text-xs bg-white hover:bg-gray-50"
+            className="shrink-0 rounded-full border px-3 py-1.5 text-xs bg-white hover:bg-gray-50 hover:cursor-pointer"
           >
             닫기
           </button>

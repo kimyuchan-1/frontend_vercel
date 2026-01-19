@@ -20,6 +20,18 @@ export default function BoardFilters({ initialValue, initialFilters }: BoardFilt
   const [regions, setRegions] = useState<string[]>([]);
   const [loadingRegions, setLoadingRegions] = useState(true);
 
+  // Sync filters with URL parameters when they change (e.g., browser back/forward)
+  useEffect(() => {
+    const urlFilters: FilterState = {
+      status: searchParams.get('status') || 'ALL',
+      type: searchParams.get('type') || 'ALL',
+      region: searchParams.get('region') || 'ALL',
+      sortBy: searchParams.get('sortBy') || 'latest', // Default to 'latest' if not present
+    };
+    setFilters(urlFilters);
+    setSearchTerm(searchParams.get('search') || '');
+  }, [searchParams]);
+
   // Load regions
   useEffect(() => {
     const fetchRegions = async () => {
@@ -39,6 +51,11 @@ export default function BoardFilters({ initialValue, initialFilters }: BoardFilt
     fetchRegions();
   }, []);
 
+  // URL parameter synchronization:
+  // When filters change, update URL search parameters and navigate
+  // This triggers server component re-render with new parameters
+  // Next.js ISR creates separate cache entries per parameter combination
+  // Pagination is reset to page 1 when filters change
   const updateURL = (updates: Partial<FilterState & { search?: string; page?: string }>) => {
     const params = new URLSearchParams(searchParams);
     
@@ -87,7 +104,7 @@ export default function BoardFilters({ initialValue, initialFilters }: BoardFilt
         <button
           type="button"
           onClick={() => setShowFilters(v => !v)}
-          className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+          className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2 hover:cursor-pointer"
         >
           <FaFilter className="w-4 h-4" />
           필터
