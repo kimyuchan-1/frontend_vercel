@@ -50,8 +50,19 @@ export async function GET(req: Request) {
       );
     }
 
+    // Transform data to match frontend expectations (camelCase)
+    const items = (data ?? []).map((item: any) => ({
+      id: item.id,
+      title: item.title,
+      status: item.status,
+      suggestionType: item.suggestion_type,
+      createdAt: item.created_at,
+      likeCount: item.like_count ?? 0,
+      viewCount: item.view_count ?? 0,
+    }));
+
     return NextResponse.json({
-      items: data ?? [],
+      items,
       page,
       pageSize,
       total: count ?? 0,
