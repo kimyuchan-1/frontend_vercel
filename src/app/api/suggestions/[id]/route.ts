@@ -28,7 +28,7 @@ function transformSuggestion(item: any) {
     sigungu_code: item.sigungu_code,
     suggestion_type: item.suggestion_type,
     status: item.status,
-    priority_score: 0.0,
+    priority_score: item.priority_score ?? 0.0,
     like_count: item.like_count ?? 0,
     view_count: item.view_count ?? 0,
     comment_count: item.comment_count ?? 0,
@@ -70,7 +70,7 @@ export async function GET(
       .from("suggestions")
       .select(`
         id, title, content, location_lat, location_lon, address,
-        sido_code, sigungu_code, suggestion_type, status,
+        sido_code, sigungu_code, suggestion_type, status, priority_score,
         like_count, view_count, comment_count, created_at, updated_at, user_id,
         user:users ( id, name, picture )
       `)
@@ -105,7 +105,7 @@ export async function PUT(
     const suggestionId = parseIntStrict(id);
 
     const body = await request.json();
-    const { title, content, suggestion_type, location_lat, location_lon, address } = body ?? {};
+    const { title, content, suggestion_type, location_lat, location_lon, address, priority_score } = body ?? {};
 
     if (!title || !content) {
       return NextResponse.json({ error: "제목과 내용은 필수입니다." }, { status: 400 });
@@ -141,21 +141,28 @@ export async function PUT(
     }
 
     // 2) 업데이트
+    const updatePayload: any = {
+      title,
+      content,
+      suggestion_type,
+      location_lat,
+      location_lon,
+      address,
+      updated_at: new Date().toISOString(),
+    };
+
+    // priority_score가 제공된 경우에만 업데이트
+    if (priority_score !== undefined && Number.isFinite(Number(priority_score))) {
+      updatePayload.priority_score = Number(priority_score);
+    }
+
     const { data, error } = await supabase
       .from("suggestions")
-      .update({
-        title,
-        content,
-        suggestion_type,
-        location_lat,
-        location_lon,
-        address,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", suggestionId)
       .select(`
         id, title, content, location_lat, location_lon, address,
-        sido_code, sigungu_code, suggestion_type, status,
+        sido_code, sigungu_code, suggestion_type, status, priority_score,
         like_count, view_count, comment_count, created_at, updated_at, user_id,
         user:users ( id, name, picture )
       `)

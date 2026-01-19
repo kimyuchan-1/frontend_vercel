@@ -34,6 +34,7 @@ interface SuggestionForm {
   location_lat: number | null;
   location_lon: number | null;
   address: string;
+  priority_score: number;
 }
 
 export default function EditSuggestionPage() {
@@ -49,7 +50,8 @@ export default function EditSuggestionPage() {
     suggestion_type: 'SIGNAL',
     location_lat: null,
     location_lon: null,
-    address: ''
+    address: '',
+    priority_score: 0
   });
 
   // 기존 건의사항 데이터 로드
@@ -68,7 +70,8 @@ export default function EditSuggestionPage() {
             suggestion_type: data.suggestion_type,
             location_lat: data.location_lat,
             location_lon: data.location_lon,
-            address: data.address
+            address: data.address,
+            priority_score: data.priority_score ?? 0
           });
         } else if (response.status === 404) {
           alert('존재하지 않는 건의사항입니다.');
@@ -102,6 +105,14 @@ export default function EditSuggestionPage() {
       location_lat: lat,
       location_lon: lon,
       address: address
+    }));
+  }, []);
+
+  // 우선순위 점수 계산 핸들러
+  const handlePriorityScoreCalculated = useCallback((score: number) => {
+    setForm(prev => ({
+      ...prev,
+      priority_score: score
     }));
   }, []);
 
@@ -278,6 +289,7 @@ export default function EditSuggestionPage() {
                   lat={form.location_lat}
                   lon={form.location_lon}
                   address={form.address}
+                  onPriorityScoreCalculated={handlePriorityScoreCalculated}
                 />
 
                 <p className="text-xs text-gray-500">
