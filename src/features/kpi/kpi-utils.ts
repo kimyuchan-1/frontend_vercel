@@ -78,8 +78,21 @@ export async function getKPIData(): Promise<KPIData> {
   const timestamp = new Date().toISOString();
   
   try {
-    // Use internal API route instead of external backend URL
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // Determine base URL based on environment
+    let baseUrl: string;
+    
+    if (typeof window !== 'undefined') {
+      // Client-side: use current origin
+      baseUrl = window.location.origin;
+    } else {
+      // Server-side: use environment variable or Vercel URL
+      baseUrl = 
+        process.env.NEXT_PUBLIC_BASE_URL || 
+        process.env.NEXT_PUBLIC_APP_URL ||
+        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 
+        'http://localhost:3000';
+    }
+    
     const apiUrl = `${baseUrl}/api/dashboard/kpi`;
 
     // Retrieve cookies from Next.js
