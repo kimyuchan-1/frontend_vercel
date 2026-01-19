@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Background -->
+  <rect width="256" height="256" fill="#03C75A"/>
+  <!-- N -->
+  <path fill="#FFFFFF" d="
+    M48 48
+    H92
+    L164 144
+    V48
+    H208
+    V208
+    H164
+    L92 112
+    V208
+    H48
+    Z
+  "/>
+</svg>

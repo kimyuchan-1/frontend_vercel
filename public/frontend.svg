@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="Frontend icon (transparent center)">
+  <defs>
+    <!-- Mask: white = visible, black = cut out (transparent) -->
+    <mask id="cutouts">
+      <!-- keep everything -->
+      <rect width="256" height="256" fill="#fff"/>
+      <!-- cut out title bar -->
+      <rect x="36" y="44" width="184" height="42" rx="10" fill="#000"/>
+      <!-- cut out inner content area -->
+      <rect x="36" y="94" width="184" height="118" rx="10" fill="#000"/>
+    </mask>
+  </defs>
+
+  <!-- Outer window with cutouts -->
+  <rect x="20" y="28" width="216" height="200" rx="18" fill="#000" mask="url(#cutouts)"/>
+
+  <!-- Dots (drawn on top of transparent title bar area, so they remain visible) -->
+  <rect x="176" y="56" width="10" height="10" rx="2" fill="#000"/>
+  <rect x="192" y="56" width="10" height="10" rx="2" fill="#000"/>
+  <rect x="208" y="56" width="10" height="10" rx="2" fill="#000"/>
+
+  <!-- Code symbol drawn on top of transparent content area -->
+  <path d="M94 124 L64 153 L94 182" fill="none" stroke="#000" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M162 124 L192 153 L162 182" fill="none" stroke="#000" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M140 126 L118 180" fill="none" stroke="#000" stroke-width="14" stroke-linecap="round"/>
+</svg>
