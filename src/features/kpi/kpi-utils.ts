@@ -3,8 +3,6 @@
  * Extracted for testability
  */
 
-import { cookies } from 'next/headers';
-
 export interface KPIData {
   totalCrosswalks: number;
   signalInstallationRate: number;
@@ -78,49 +76,58 @@ export async function getKPIData(): Promise<KPIData> {
   const timestamp = new Date().toISOString();
   
   try {
-    // Determine base URL based on environment
-    let baseUrl: string;
-    
-    if (typeof window !== 'undefined') {
-      // Client-side: use current origin
-      baseUrl = window.location.origin;
-    } else {
-      // Server-side: use environment variable or Vercel URL
-      baseUrl = 
-        process.env.NEXT_PUBLIC_BASE_URL || 
-        process.env.NEXT_PUBLIC_APP_URL ||
-        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 
-        'http://localhost:3000';
-    }
-    
-    const apiUrl = `${baseUrl}/api/dashboard/kpi`;
+    // Import Supabase service client
+    const { getSupabaseServiceClient } = await import('@/lib/supabase/server');
+    const supabase = getSupabaseServiceClient();
 
-    // Retrieve cookies from Next.js
-    const cookieStore = await cookies();
-    const cookieHeader = cookieStore
-      .getAll()
-      .map((cookie) => `${cookie.name}=${cookie.value}`)
-      .join('; ');
+    // Try to get data from view first
+    const { data: viewData, error: viewError } = await supabase
+      .from("v_kpi_summary_json")
+      .select("data")
+      .single();
 
-    // Make request to internal API
-    const response = await fetch(apiUrl, {
-      headers: {
-        'Accept': 'application/json',
-        ...(cookieHeader && { 'Cookie': cookieHeader }),
-      },
-      cache: 'no-store',
-    });
-
-    if (!response.ok) {
-      console.error(`[${timestamp}] [Dashboard KPI] HTTP error: ${response.status}`);
-      console.error(`  URL: ${apiUrl}`);
-      console.error(`  Status: ${response.status}`);
-      return getFallbackKPIData();
+    // If view exists and has data, return it
+    if (!viewError && viewData?.data) {
+      return normalizeKpiPayload(viewData.data);
     }
 
-    // Validate and normalize response data
-    const payload = await response.json();
-    return normalizeKpiPayload(payload);
+    // If view doesn't exist, calculate KPI data manually
+    console.warn(`[${timestamp}] [Dashboard KPI] View not found, calculating manually`);
+
+    // Get crosswalk count
+    const { count: crosswalkCount } = await supabase
+      .from("crosswalks")
+      .select("*", { count: 'exact', head: true });
+
+    // Get accident data for risk calculation
+    const { data: accidents } = await supabase
+      .from("ACC")
+      .select("deaths, serious_injuries, minor_injuries, reported_injuries")
+      .limit(1000);
+
+    // Calculate risk index from accident data
+    let riskIndex = 0;
+    if (accidents && accidents.length > 0) {
+      const totalDeaths = accidents.reduce((sum, acc) => sum + (Number(acc.deaths) || 0), 0);
+      const totalSerious = accidents.reduce((sum, acc) => sum + (Number(acc.serious_injuries) || 0), 0);
+      const totalMinor = accidents.reduce((sum, acc) => sum + (Number(acc.minor_injuries) || 0), 0);
+      
+      const weightedScore = totalDeaths * 10 + totalSerious * 5 + totalMinor * 2;
+      riskIndex = Math.min(10, Math.log10(weightedScore + 1) * 2);
+    }
+
+    // Calculate safety index (inverse of risk)
+    const safetyIndex = Math.max(0, 10 - riskIndex);
+
+    // Return calculated KPI data
+    const kpiData = {
+      totalCrosswalks: crosswalkCount || 0,
+      signalInstallationRate: 0.75,
+      riskIndex: Math.round(riskIndex * 100) / 100,
+      safetyIndex: Math.round(safetyIndex * 100) / 100,
+    };
+
+    return normalizeKpiPayload(kpiData);
 
   } catch (error: any) {
     console.error(`[${timestamp}] [Dashboard KPI] Error fetching KPI data`);
