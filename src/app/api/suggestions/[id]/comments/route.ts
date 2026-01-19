@@ -130,6 +130,25 @@ export async function POST(
 
     const supabase = await getSupabaseServerClient();
 
+    // parent_id 유효성 검사
+    if (parent_id !== null) {
+      const { data: parentComment, error: parentError } = await supabase
+        .from("suggestion_comments")
+        .select("id, suggestion_id")
+        .eq("id", parent_id)
+        .eq("suggestion_id", suggestionId)
+        .maybeSingle();
+
+      if (parentError) {
+        console.error("Parent comment check error:", parentError);
+        return NextResponse.json({ error: "부모 댓글 확인 중 오류가 발생했습니다." }, { status: 500 });
+      }
+
+      if (!parentComment) {
+        return NextResponse.json({ error: "존재하지 않는 댓글에 답글을 달 수 없습니다." }, { status: 400 });
+      }
+    }
+
     // 1) 댓글 생성
     const { data, error } = await supabase
       .from("suggestion_comments")
