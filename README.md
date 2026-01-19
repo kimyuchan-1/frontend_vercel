@@ -77,8 +77,9 @@ This application has been extensively optimized using modern Next.js rendering s
 - **Icons**: React Icons
 
 ### Backend & Data
+- **Database**: Supabase (PostgreSQL)
 - **Authentication**: Supabase Auth with OAuth2
-- **API**: Next.js API Routes
+- **API**: Next.js API Routes with Supabase Client
 - **Data Fetching**: Native fetch with caching strategies
 
 ### Development & Testing
@@ -119,10 +120,24 @@ cp .env.example .env.local
 
 Edit `.env.local` with your configuration:
 ```env
-NEXT_PUBLIC_API_URL=your_api_url
+# Supabase Configuration (Required)
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_key
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+
+# Naver OAuth Configuration (Required for Naver OAuth login)
+NAVER_CLIENT_ID=your_naver_client_id
+NAVER_CLIENT_SECRET=your_naver_client_secret
+
+# Application URL
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
+
+**Important Notes:**
+- `SUPABASE_SERVICE_ROLE_KEY`: Admin key with full database access. Never expose to client-side code.
+- `NAVER_CLIENT_SECRET`: OAuth secret credential. Never expose to client-side code.
+- Naver OAuth variables are optional but both must be set together if using Naver login.
+- See `.env.example` for detailed documentation of all environment variables.
 
 ### Development
 
@@ -311,22 +326,44 @@ See [Next.js deployment documentation](https://nextjs.org/docs/app/building-your
 
 ## 📝 Environment Variables
 
-Required environment variables:
+### Required Variables
 
 ```env
-# API Configuration
-NEXT_PUBLIC_API_URL=              # Backend API URL
-API_URL=                          # Server-side API URL
-
 # Supabase Configuration
-NEXT_PUBLIC_SUPABASE_URL=         # Supabase project URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY=    # Supabase anonymous key
-
-# OAuth2 Configuration (optional)
-OAUTH2_CLIENT_ID=                 # OAuth2 client ID
-OAUTH2_CLIENT_SECRET=             # OAuth2 client secret
-OAUTH2_REDIRECT_URI=              # OAuth2 redirect URI
+NEXT_PUBLIC_SUPABASE_URL=         # Supabase project URL (public, safe for browser)
+NEXT_PUBLIC_SUPABASE_ANON_KEY=    # Supabase anonymous key (public, safe for browser)
+SUPABASE_SERVICE_ROLE_KEY=        # Supabase service role key (⚠️ SERVER-ONLY, admin access)
 ```
+
+### Optional Variables
+
+```env
+# Naver OAuth Configuration (both required if using Naver OAuth)
+NAVER_CLIENT_ID=                  # Naver OAuth client ID (⚠️ SERVER-ONLY)
+NAVER_CLIENT_SECRET=              # Naver OAuth client secret (⚠️ SERVER-ONLY, sensitive)
+
+# Application Configuration
+NEXT_PUBLIC_APP_URL=              # Application base URL (e.g., http://localhost:3000)
+NODE_ENV=                         # Environment (development, production, test)
+```
+
+### Security Notes
+
+**Critical - Server-Only Variables:**
+- `SUPABASE_SERVICE_ROLE_KEY`: Has full admin access to your database. Bypasses Row Level Security (RLS).
+- `NAVER_CLIENT_SECRET`: OAuth secret credential for Naver authentication.
+
+**Never:**
+- Prefix these with `NEXT_PUBLIC_` (will expose to browser)
+- Commit these to version control
+- Share these in logs, error messages, or public forums
+
+**Naver OAuth Setup:**
+1. Both `NAVER_CLIENT_ID` and `NAVER_CLIENT_SECRET` must be set together
+2. Get credentials from [Naver Developers Console](https://developers.naver.com/apps/)
+3. Configure callback URL: `https://yourdomain.com/api/oauth2/naver/callback`
+
+See `.env.example` for detailed configuration instructions and examples.
 
 ## 🤝 Contributing
 

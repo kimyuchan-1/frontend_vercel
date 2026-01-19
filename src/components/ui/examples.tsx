@@ -139,7 +139,6 @@ export function ClientFormExample() {
     // Simulate API call
     await new Promise(resolve => setTimeout(resolve, 2000))
     
-    console.log('Form submitted:', formData)
     setIsSubmitting(false)
     setFormData({ email: '', password: '', category: '', message: '' })
     setErrors({})

@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import SectionHeader from "@/components/account/SectionHeader";
 import ProfileForm from "../profile/ProfileForm";
-import { getAuthUser } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 
 // Force SSR with no caching for security
 export const dynamic = 'force-dynamic';
@@ -9,7 +9,7 @@ export const revalidate = 0;
 
 export default async function ProfilePage() {
     // Server-side authentication check
-    const user = await getAuthUser();
+    const user = await getCurrentUser();
     
     if (!user) {
         redirect("/signin");

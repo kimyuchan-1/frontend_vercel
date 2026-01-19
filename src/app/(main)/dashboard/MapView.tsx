@@ -228,15 +228,22 @@ function BoundsFetcherAcc({ onData, onLoading }: { onData: (rows: Acc[]) => void
                     { cache: "no-store" }
                 );
 
-                const json = (await res.json()) as ApiResponse<unknown>;
-
-                if (res.ok && json?.success) {
-                    const data = json.data; // 여기서부터가 실제 payload
-                    if (validateAccHotspotData(data)) {
-                        onData(data);
+                if (res.ok) {
+                    const json = await res.json();
+                    
+                    // API가 배열을 직접 반환하는 경우
+                    if (validateAccHotspotData(json)) {
+                        onData(json);
+                        return;
+                    }
+                    
+                    // API가 { success: true, data: [] } 형식으로 반환하는 경우
+                    if (json?.success && validateAccHotspotData(json.data)) {
+                        onData(json.data);
                         return;
                     }
                 }
+                
                 onData([]);
             } catch (apiError) {
                 console.warn("[MapView] API acc_hotspot failed:", apiError);

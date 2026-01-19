@@ -126,7 +126,6 @@ export function ConfirmationModalExample() {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleConfirm = () => {
-    console.log('Action confirmed')
     setIsOpen(false)
   }
 
@@ -164,7 +163,6 @@ export function FormModalExample() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    console.log('Form submitted:', { name, email })
     setIsOpen(false)
     setName('')
     setEmail('')

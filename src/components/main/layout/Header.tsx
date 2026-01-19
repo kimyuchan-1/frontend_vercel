@@ -1,10 +1,10 @@
 import Link from "next/link";
 import NavTabs from "./NavTabs";
 import AccountMenu from "./AccountMenu";
-import { getAuthUser } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 
 export default async function Header() {
-  const user = await getAuthUser(); // null이면 비로그인
+  const user = await getCurrentUser(); // null이면 비로그인
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-200 bg-gray-100/80 backdrop-blur">

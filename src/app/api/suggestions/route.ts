@@ -1,22 +1,56 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { backendClient } from "@/lib/backendClient";
-import { transformSortParameter } from "@/lib/sortTransform";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getCurrentUserId } from "@/lib/auth";
+
+type SortKey = "latest" | "popular" | "status";
 
 function parseIntSafe(v: string | null, fallback: number) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
 
+function isNumericString(v: string) {
+  return v.trim() !== "" && Number.isFinite(Number(v));
+}
+
+function districtIdToCodes(districtId: number) {
+  const sido_code = Math.floor(districtId / 100000000);
+  const sigungu_code = Math.floor(districtId / 100000);
+  return { sido_code, sigungu_code };
+}
+
+async function resolveRegionCodes(regionRaw: string, supabase: Awaited<ReturnType<typeof getSupabaseServerClient>>) {
+  const region = (regionRaw ?? "").trim();
+  if (!region || region === "ALL") return { sido_code: null as number | null, sigungu_code: null as number | null };
+
+  if (isNumericString(region)) {
+    return { sido_code: Number(region), sigungu_code: null };
+  }
+
+  const { data, error } = await supabase
+    .from("District")
+    .select("district_id")
+    .eq("district_name", region)
+    .eq("available", 1)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data?.district_id) return { sido_code: null, sigungu_code: null };
+
+  const { sido_code, sigungu_code } = districtIdToCodes(Number(data.district_id));
+
+  const isSigunguLevel = region.split(" ").length >= 2;
+
+  return {
+    sido_code,
+    sigungu_code: isSigunguLevel ? sigungu_code : null,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
-
     const { searchParams } = new URL(request.url);
 
     const page = parseIntSafe(searchParams.get("page"), 1);
@@ -27,82 +61,122 @@ export async function GET(request: NextRequest) {
     const region = (searchParams.get("region") ?? "").trim();
     const sortBy = (searchParams.get("sortBy") ?? "latest").trim();
 
-    // 백엔드 API 호출
-    const params: Record<string, any> = {
-      page: page - 1, // Spring은 0-based
-      size,
-      sort: transformSortParameter(sortBy),
-    };
+    const supabase = await getSupabaseServerClient();
 
-    if (status && status !== "ALL") params.status = status;
-    if (type && type !== "ALL") params.type = type;
-    if (region && region !== "ALL") params.region = region;
-    if (search) params.search = search;
+    // region → codes
+    const { sido_code, sigungu_code } = await resolveRegionCodes(region, supabase);
 
-    const response = await backendClient.get("/api/suggestions", {
-      params,
-      headers: cookieHeader ? { Cookie: cookieHeader } : {},
-    });
+    const from = Math.max(0, (page - 1) * size);
+    const to = from + size - 1;
 
-    const data = response.data;
+    let q = supabase
+      .from("suggestions")
+      .select(
+        `
+        id,
+        title,
+        content,
+        location_lat,
+        location_lon,
+        address,
+        sido_code,
+        sigungu_code,
+        suggestion_type,
+        status,
+        like_count,
+        view_count,
+        comment_count,
+        created_at,
+        updated_at,
+        user_id,
+        users:users (
+          id,
+          name,
+          picture
+        )
+      `,
+        { count: "exact" }
+      );
 
-    // Spring Page 응답을 프론트엔드 형식으로 변환
-    const content = (data.content ?? []).map((item: any) => {
+    // 검색
+    if (search) {
+      const esc = search.replace(/%/g, "\\%").replace(/_/g, "\\_");
+      q = q.or(`title.ilike.%${esc}%,content.ilike.%${esc}%,address.ilike.%${esc}%`);
+    }
+
+    // 필터
+    if (status && status !== "ALL") q = q.eq("status", status);
+    if (type && type !== "ALL") q = q.eq("suggestion_type", type);
+
+    if (sido_code !== null) q = q.eq("sido_code", sido_code);
+    if (sigungu_code !== null) q = q.eq("sigungu_code", sigungu_code);
+
+    // 정렬
+    if (sortBy === "popular") {
+      q = q.order("like_count", { ascending: false }).order("created_at", { ascending: false });
+    } else if (sortBy === "status") {
+      q = q.order("status", { ascending: true }).order("created_at", { ascending: false });
+    } else {
+      q = q.order("created_at", { ascending: false });
+    }
+
+    // 페이징
+    q = q.range(from, to);
+
+    const { data, error, count } = await q;
+
+    if (error) {
+      console.error("Supabase error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // 프론트엔드 형식으로 변환
+    const content = (data ?? []).map((row: any) => {
       // Extract sido and sigungu from address
-      // 주소 형식: "서울특별시 중구 소공동 태평로2가 세종대로19길"
-      const addressParts = (item.address ?? "").split(" ");
+      const addressParts = (row.address ?? "").split(" ");
       const sido = addressParts[0] ?? "";
       const sigungu = addressParts[1] ?? "";
 
       return {
-        id: item.id,
-        title: item.title,
-        content: item.content,
-        location_lat: item.locationLat,
-        location_lon: item.locationLon,
-        address: item.address,
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        location_lat: row.location_lat,
+        location_lon: row.location_lon,
+        address: row.address,
         sido: sido,
         sigungu: sigungu,
-        suggestion_type: item.suggestionType,
-        status: item.status,
-        priority_score: item.priorityScore ?? 0.0,
-        like_count: item.likeCount ?? 0,
-        view_count: item.viewCount ?? 0,
-        comment_count: item.commentCount ?? 0,
-        created_at: item.createdAt,
-        updated_at: item.updatedAt,
-        user_id: item.userId,
-        user: item.user ? { id: item.user.id, name: item.user.name, picture: item.user.picture ?? null } : null,
+        suggestion_type: row.suggestion_type,
+        status: row.status,
+        priority_score: 0.0,
+        like_count: row.like_count ?? 0,
+        view_count: row.view_count ?? 0,
+        comment_count: row.comment_count ?? 0,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        user_id: row.user_id,
+        user: row.users ? { id: row.users.id, name: row.users.name, picture: row.users.picture ?? null } : null,
       };
     });
 
+    const totalElements = count ?? 0;
+    const totalPages = Math.ceil(totalElements / size);
+
     return NextResponse.json({
       content,
-      totalElements: data.totalElements ?? 0,
-      totalPages: data.totalPages ?? 0,
+      totalElements,
+      totalPages,
       currentPage: page,
       size,
     });
   } catch (error: any) {
-    console.error("Suggestions API error:", error?.response?.data ?? error.message);
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Internal Server Error";
-    return NextResponse.json({ error: message }, { status });
+    console.error("Suggestions API error:", error?.message ?? error);
+    return NextResponse.json({ error: error?.message ?? "Internal Server Error" }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
-
-    if (!cookieHeader) {
-      return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
-    }
-
     const body = await request.json();
     const { title, content, suggestion_type, location_lat, location_lon, address, priority_score, sido_code, sigungu_code } = body;
 
@@ -110,26 +184,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "필수 필드가 누락되었습니다." }, { status: 400 });
     }
 
-    // 백엔드 API 호출 (camelCase로 변환)
+    const supabase = await getSupabaseServerClient();
+
+    // 인증된 사용자 ID 가져오기
+    const user_id = await getCurrentUserId();
+    if (!user_id) {
+      return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
+    }
+
     const payload = {
       title,
       content,
-      suggestionType: suggestion_type,
-      locationLat: location_lat,
-      locationLon: location_lon,
+      suggestion_type,
+      location_lat,
+      location_lon,
       address,
-      priorityScore: priority_score != null ? priority_score : 0.0, // Double로 전달
-      sidoCode: sido_code ?? null,
-      sigunguCode: sigungu_code ?? null,
+      sido_code: Number.isFinite(Number(sido_code)) ? Number(sido_code) : null,
+      sigungu_code: Number.isFinite(Number(sigungu_code)) ? Number(sigungu_code) : null,
+      status: "PENDING",
+      like_count: 0,
+      view_count: 0,
+      comment_count: "0",
+      user_id,
     };
 
-    // console.log('[Suggestions API] Creating suggestion with payload:', payload);
+    const { data, error } = await supabase
+      .from("suggestions")
+      .insert(payload)
+      .select("*")
+      .single();
 
-    const response = await backendClient.post("/api/suggestions", payload, {
-      headers: cookieHeader ? { Cookie: cookieHeader } : {},
-    });
-
-    const item = response.data;
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     // Cache invalidation strategy for CREATE operations:
     // - Invalidate board list cache to show new post immediately
@@ -137,7 +225,6 @@ export async function POST(request: NextRequest) {
     // - Graceful error handling: creation succeeds even if cache invalidation fails
     try {
       revalidatePath('/board', 'page');
-      console.log('Cache invalidated for /board after post creation');
     } catch (revalidateError) {
       // Log error but don't fail the request
       console.error('Cache revalidation error:', revalidateError);
@@ -145,30 +232,28 @@ export async function POST(request: NextRequest) {
 
     // 응답을 프론트엔드 형식으로 변환
     const result = {
-      id: item.id,
-      title: item.title,
-      content: item.content,
-      location_lat: item.locationLat,
-      location_lon: item.locationLon,
-      address: item.address,
-      sido_code: item.sidoCode,
-      sigungu_code: item.sigunguCode,
-      suggestion_type: item.suggestionType,
-      status: item.status,
-      priority_score: item.priorityScore ?? 0.0,
-      like_count: item.likeCount ?? 0,
-      view_count: item.viewCount ?? 0,
-      comment_count: item.commentCount ?? 0,
-      created_at: item.createdAt,
-      updated_at: item.updatedAt,
-      user_id: item.userId,
+      id: data.id,
+      title: data.title,
+      content: data.content,
+      location_lat: data.location_lat,
+      location_lon: data.location_lon,
+      address: data.address,
+      sido_code: data.sido_code,
+      sigungu_code: data.sigungu_code,
+      suggestion_type: data.suggestion_type,
+      status: data.status,
+      priority_score: priority_score ?? 0.0,
+      like_count: data.like_count ?? 0,
+      view_count: data.view_count ?? 0,
+      comment_count: data.comment_count ?? 0,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+      user_id: data.user_id,
     };
 
     return NextResponse.json(result, { status: 201 });
   } catch (error: any) {
-    console.error("Suggestions POST error:", error?.response?.data ?? error.message);
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Internal Server Error";
-    return NextResponse.json({ error: message }, { status });
+    console.error("Suggestions POST error:", error?.message ?? error);
+    return NextResponse.json({ error: error?.message ?? "Internal Server Error" }, { status: 500 });
   }
 }

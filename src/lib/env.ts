@@ -6,6 +6,9 @@ const serverSchema = z.object({
   BACKEND_URL: z.string().url('BACKEND_URL must be a valid URL'),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, 'SUPABASE_SERVICE_ROLE_KEY is required'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Naver OAuth credentials (optional - only required if using Naver OAuth)
+  NAVER_CLIENT_ID: z.string().optional(),
+  NAVER_CLIENT_SECRET: z.string().optional(),
 });
 
 // Client-side environment schema
@@ -27,6 +30,8 @@ const SENSITIVE_KEYS = [
   'JWT_SECRET',
   'SESSION_SECRET',
   'ENCRYPTION_KEY',
+  'NAVER_CLIENT_SECRET',
+  'CLIENT_SECRET',
 ] as const;
 
 // Security check: Detect if sensitive credentials are accidentally exposed with NEXT_PUBLIC_ prefix
@@ -76,6 +81,8 @@ export const serverEnv = serverSchema.parse({
   BACKEND_URL: process.env.BACKEND_URL,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   NODE_ENV: process.env.NODE_ENV,
+  NAVER_CLIENT_ID: process.env.NAVER_CLIENT_ID,
+  NAVER_CLIENT_SECRET: process.env.NAVER_CLIENT_SECRET,
 });
 
 // Validate and export client environment
@@ -85,6 +92,32 @@ export const clientEnv = clientSchema.parse({
 
 // Run security validation
 validateSecurity();
+
+// Helper function to validate Naver OAuth configuration
+export function validateNaverOAuthConfig(): { isConfigured: boolean; error?: string } {
+  const clientId = process.env.NAVER_CLIENT_ID;
+  const clientSecret = process.env.NAVER_CLIENT_SECRET;
+  
+  if (!clientId && !clientSecret) {
+    return { isConfigured: false };
+  }
+  
+  if (!clientId) {
+    return { 
+      isConfigured: false, 
+      error: 'NAVER_CLIENT_ID is required when NAVER_CLIENT_SECRET is set' 
+    };
+  }
+  
+  if (!clientSecret) {
+    return { 
+      isConfigured: false, 
+      error: 'NAVER_CLIENT_SECRET is required when NAVER_CLIENT_ID is set' 
+    };
+  }
+  
+  return { isConfigured: true };
+}
 
 // Type exports for IDE autocomplete
 export type ServerEnv = z.infer<typeof serverSchema>;

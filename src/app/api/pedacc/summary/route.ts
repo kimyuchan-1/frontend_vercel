@@ -1,69 +1,139 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { backendClient } from "@/lib/backendClient";
+import { getSupabaseServerClient, getSupabaseServiceClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+function prefixRange(prefix2: string) {
+  const p = Number(prefix2);
+  const base = p * 100_000_000;
+  const next = (p + 1) * 100_000_000;
+  return { gte: base, lt: next };
+}
+
+function rangeFromDistrict5(d5: number) {
+  const from = d5 * 100_000;        // d5 × 10^5
+  const toExcl = (d5 + 1) * 100_000;
+  return { from, toExcl };
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const region = (searchParams.get("region") ?? "").trim();
+  const region = (searchParams.get("region") ?? "").trim(); // "" | "11" | "1111000000" | "11110"
 
   try {
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
+    // Use service client to bypass RLS
+    const supabase = getSupabaseServiceClient();
 
-    const params: Record<string, string> = {};
+    let q = supabase
+      .from("ACC")
+      .select(
+        "year, month, accident_count, casualty_count, fatality_count, serious_injury_count, minor_injury_count, reported_injury_count, sigungu_code"
+      );
+
     if (region) {
-      params.region = region;
+      if (/^\d{2}$/.test(region)) {
+        const { gte, lt } = prefixRange(region);
+        q = q.gte("sigungu_code", gte).lt("sigungu_code", lt);
+
+      } else if (/^\d{10}$/.test(region)) {
+        q = q.eq("sigungu_code", Number(region));
+
+      } else if (/^\d{5}$/.test(region)) {
+        const { from, toExcl } = rangeFromDistrict5(Number(region));
+        q = q.gte("sigungu_code", from).lt("sigungu_code", toExcl);
+
+      } else {
+        return NextResponse.json({ error: "Invalid region" }, { status: 400 });
+      }
     }
 
-    const response = await backendClient.get("/api/pedacc/summary", {
-      params,
-      headers: cookieHeader ? { Cookie: cookieHeader } : {},
-    });
-    const data = response.data;
+    const { data, error } = await q;
+    if (error) {
+      console.error("PedAcc summary API error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
-    // 백엔드 응답을 프론트엔드 형식으로 변환 (camelCase -> snake_case)
-    const yearly = (data.yearly ?? []).map((item: any) => ({
-      year: item.year,
-      accident_count: item.accidentCount ?? 0,
-      casualty_count: item.casualtyCount ?? 0,
-      fatality_count: item.fatalityCount ?? 0,
-      serious_injury_count: item.seriousInjuryCount ?? 0,
-      minor_injury_count: item.minorInjuryCount ?? 0,
-      reported_injury_count: item.reportedInjuryCount ?? 0,
-    }));
+    const rows = data ?? [];
 
-    const monthly = (data.monthly ?? []).map((item: any) => ({
-      year: item.year,
-      month: item.month,
-      accident_count: item.accidentCount ?? 0,
-      casualty_count: item.casualtyCount ?? 0,
-      fatality_count: item.fatalityCount ?? 0,
-      serious_injury_count: item.seriousInjuryCount ?? 0,
-      minor_injury_count: item.minorInjuryCount ?? 0,
-      reported_injury_count: item.reportedInjuryCount ?? 0,
-    }));
+    // yearly 합산
+    const byYear = new Map<number, any>();
+    for (const r of rows) {
+      const y = Number(r.year);
+      const cur =
+        byYear.get(y) ?? {
+          year: y,
+          accident_count: 0,
+          casualty_count: 0,
+          fatality_count: 0,
+          serious_injury_count: 0,
+          minor_injury_count: 0,
+          reported_injury_count: 0,
+        };
+
+      cur.accident_count += Number(r.accident_count ?? 0);
+      cur.casualty_count += Number(r.casualty_count ?? 0);
+      cur.fatality_count += Number(r.fatality_count ?? 0);
+      cur.serious_injury_count += Number(r.serious_injury_count ?? 0);
+      cur.minor_injury_count += Number(r.minor_injury_count ?? 0);
+      cur.reported_injury_count += Number(r.reported_injury_count ?? 0);
+      byYear.set(y, cur);
+    }
+
+    const yearly = Array.from(byYear.values()).sort((a, b) => a.year - b.year);
+
+    // monthly 합산
+    const byMonth = new Map<number, any>();
+    for (const r of rows) {
+      const y = Number(r.year);
+      const m = Number(r.month);
+      const key = y * 100 + m;
+
+      const cur =
+        byMonth.get(key) ?? {
+          year: y,
+          month: m,
+          accident_count: 0,
+          casualty_count: 0,
+          fatality_count: 0,
+          serious_injury_count: 0,
+          minor_injury_count: 0,
+          reported_injury_count: 0,
+        };
+
+      cur.accident_count += Number(r.accident_count ?? 0);
+      cur.casualty_count += Number(r.casualty_count ?? 0);
+      cur.fatality_count += Number(r.fatality_count ?? 0);
+      cur.serious_injury_count += Number(r.serious_injury_count ?? 0);
+      cur.minor_injury_count += Number(r.minor_injury_count ?? 0);
+      cur.reported_injury_count += Number(r.reported_injury_count ?? 0);
+      byMonth.set(key, cur);
+    }
+
+    const monthly = Array.from(byMonth.values()).sort(
+      (a, b) => a.year - b.year || a.month - b.month
+    );
 
     return NextResponse.json(
       {
-        region: data.region ?? null,
-        regionType: data.regionType ?? "NATION",
+        region: region || null,
+        regionType: !region
+          ? "NATION"
+          : /^\d{2}$/.test(region)
+          ? "SIDO_PREFIX2"
+          : /^\d{5}$/.test(region)
+          ? "DISTRICT5"
+          : "SIGUNGU10",
         yearly,
         monthly,
       },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error: any) {
-    console.error("PedAcc summary API error:", error?.response?.data ?? error.message);
+    console.error("PedAcc summary API error:", error?.message ?? error);
     
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Failed to fetch accident summary";
+    const message = error?.message ?? "Failed to fetch accident summary";
     
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

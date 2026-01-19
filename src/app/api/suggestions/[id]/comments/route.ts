@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { backendClient } from "@/lib/backendClient";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
+import { getCurrentUserId } from "@/lib/auth";
 
 function parseIntStrict(v: string) {
   const n = Number(v);
@@ -13,6 +13,7 @@ type ApiComment = {
   suggestion_id: number;
   content: string;
   created_at: string;
+  updated_at?: string;
   user: { id: number; name: string | null; picture?: string | null } | null;
   parent_id: number | null;
   replies: ApiComment[];
@@ -23,44 +24,12 @@ function transformComment(item: any, suggestionId: number): ApiComment {
     id: item.id,
     suggestion_id: suggestionId,
     content: item.content ?? "",
-    created_at: item.createdAt ?? new Date().toISOString(),
-    user: item.user ? { id: item.user.id, name: item.user.name, picture: item.user.picture ?? null } : null,
-    parent_id: item.parentId ?? null,
-    replies: (item.replies ?? []).map((r: any) => transformComment(r, suggestionId)),
+    created_at: item.created_at ?? new Date().toISOString(),
+    updated_at: item.updated_at,
+    user: item.users ? { id: item.users.id, name: item.users.name, picture: item.users.picture ?? null } : null,
+    parent_id: item.parent_id ?? null,
+    replies: [],
   };
-}
-
-function buildCommentTree(items: any[], suggestionId: number): ApiComment[] {
-  const byId = new Map<number, ApiComment>();
-  const roots: ApiComment[] = [];
-
-  // 1) 노드 만들기
-  for (const item of items) {
-    const node = transformComment(item, suggestionId);
-    node.replies = []; // 트리 구성 시 다시 채움
-    byId.set(node.id, node);
-  }
-
-  // 2) parent_id로 트리 구성
-  for (const node of byId.values()) {
-    if (node.parent_id && byId.has(node.parent_id)) {
-      byId.get(node.parent_id)!.replies.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  // 3) 정렬(작성시간 오름차순)
-  const sortByCreatedAt = (a: ApiComment, b: ApiComment) =>
-    new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-
-  const sortRecursive = (list: ApiComment[]) => {
-    list.sort(sortByCreatedAt);
-    for (const item of list) sortRecursive(item.replies);
-  };
-  sortRecursive(roots);
-
-  return roots;
 }
 
 export async function GET(
@@ -71,33 +40,65 @@ export async function GET(
     const { id } = await params;
     const suggestionId = parseIntStrict(id);
 
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
+    const supabase = await getSupabaseServerClient();
 
-    const response = await backendClient.get(`/api/suggestions/${suggestionId}/comments`, {
-      headers: cookieHeader ? { Cookie: cookieHeader } : {},
+    const { data, error } = await supabase
+      .from("suggestion_comments")
+      .select(`
+        id,
+        content,
+        created_at,
+        updated_at,
+        parent_id,
+        user_id,
+        users:users (
+          id,
+          name,
+          picture
+        )
+      `)
+      .eq("suggestion_id", suggestionId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Supabase query error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const allComments = (data ?? []).map((item: any) => transformComment(item, suggestionId));
+
+    // 대댓글 구조화: parent_id가 null인 것만 최상위 댓글로
+    const commentMap = new Map<number, ApiComment>();
+    const rootComments: ApiComment[] = [];
+
+    // 1단계: 모든 댓글을 Map에 저장
+    allComments.forEach(comment => {
+      commentMap.set(comment.id, { ...comment, replies: [] });
     });
 
-    const items = response.data ?? [];
+    // 2단계: 대댓글을 부모 댓글의 replies에 추가
+    allComments.forEach(comment => {
+      const commentWithReplies = commentMap.get(comment.id)!;
+      
+      if (comment.parent_id === null) {
+        // 최상위 댓글
+        rootComments.push(commentWithReplies);
+      } else {
+        // 대댓글
+        const parent = commentMap.get(comment.parent_id);
+        if (parent) {
+          parent.replies.push(commentWithReplies);
+        } else {
+          // 부모를 찾을 수 없으면 최상위로 처리
+          rootComments.push(commentWithReplies);
+        }
+      }
+    });
 
-    // 백엔드가 이미 트리 구조로 반환하면 그대로 변환, 아니면 트리 구성
-    const isAlreadyTree = items.length > 0 && Array.isArray(items[0]?.replies);
-    
-    if (isAlreadyTree) {
-      const tree = items.map((item: any) => transformComment(item, suggestionId));
-      return NextResponse.json(tree);
-    } else {
-      const tree = buildCommentTree(items, suggestionId);
-      return NextResponse.json(tree);
-    }
+    return NextResponse.json(rootComments);
   } catch (error: any) {
-    console.error("Comments GET error:", error?.response?.data ?? error.message);
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Internal Server Error";
-    return NextResponse.json({ error: message }, { status });
+    console.error("Comments GET error:", error?.message ?? error);
+    return NextResponse.json({ error: error?.message ?? "Internal Server Error" }, { status: 500 });
   }
 }
 
@@ -109,13 +110,9 @@ export async function POST(
     const { id } = await params;
     const suggestionId = parseIntStrict(id);
 
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
-
-    if (!cookieHeader) {
+    // 인증된 사용자 ID 가져오기
+    const user_id = await getCurrentUserId();
+    if (!user_id) {
       return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
     }
 
@@ -131,33 +128,59 @@ export async function POST(
       return NextResponse.json({ error: "댓글은 1000자 이내로 작성해주세요." }, { status: 400 });
     }
 
-    const payload = {
-      content,
-      parentId: parent_id,
-    };
+    const supabase = await getSupabaseServerClient();
 
-    const response = await backendClient.post(`/api/suggestions/${suggestionId}/comments`, payload, {
-      headers: { Cookie: cookieHeader },
-    });
+    // 1) 댓글 생성
+    const { data, error } = await supabase
+      .from("suggestion_comments")
+      .insert({
+        suggestion_id: suggestionId,
+        user_id,
+        content,
+        parent_id,
+      })
+      .select(`
+        id,
+        content,
+        created_at,
+        updated_at,
+        parent_id,
+        user_id,
+        users:users (
+          id,
+          name,
+          picture
+        )
+      `)
+      .single();
 
-    const item = response.data;
+    if (error) {
+      console.error("Supabase insert error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
-    const newComment: ApiComment = {
-      id: item.id,
-      suggestion_id: suggestionId,
-      content: item.content ?? "",
-      created_at: item.createdAt ?? new Date().toISOString(),
-      user: item.user ? { id: item.user.id, name: item.user.name, picture: item.user.picture ?? null } : null,
-      parent_id: item.parentId ?? null,
-      replies: [],
-    };
+    // 2) 댓글 카운트 증가
+    const { error: rpcErr } = await supabase.rpc("inc_suggestion_comment_count", { sid: suggestionId });
+    if (rpcErr) {
+      console.error("Comment count increment error:", rpcErr);
+      // 카운트 증가 실패해도 댓글 생성은 성공으로 처리
+    }
+
+    // 3) 캐시 무효화 - 댓글 개수 즉시 반영
+    try {
+      const { revalidatePath } = await import('next/cache');
+      revalidatePath(`/board/${suggestionId}`);
+      revalidatePath('/board');
+    } catch (e) {
+      console.error('Cache revalidation error:', e);
+    }
+
+    const newComment = transformComment(data, suggestionId);
 
     return NextResponse.json(newComment, { status: 201 });
   } catch (error: any) {
-    console.error("Comments POST error:", error?.response?.data ?? error.message);
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Internal Server Error";
-    return NextResponse.json({ error: message }, { status });
+    console.error("Comments POST error:", error?.message ?? error);
+    return NextResponse.json({ error: error?.message ?? "Internal Server Error" }, { status: 500 });
   }
 }
 
@@ -176,13 +199,9 @@ export async function PUT(
       return NextResponse.json({ error: "댓글 ID가 필요합니다." }, { status: 400 });
     }
 
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
-
-    if (!cookieHeader) {
+    // 인증된 사용자 ID 가져오기
+    const user_id = await getCurrentUserId();
+    if (!user_id) {
       return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
     }
 
@@ -193,30 +212,63 @@ export async function PUT(
       return NextResponse.json({ error: "댓글 내용을 입력해주세요." }, { status: 400 });
     }
 
-    const response = await backendClient.put(
-      `/api/suggestions/${suggestionId}/comments/${commentId}`,
-      { content },
-      { headers: { Cookie: cookieHeader } }
-    );
+    const supabase = await getSupabaseServerClient();
 
-    const item = response.data;
+    // 1) 권한 확인 (본인 댓글인지)
+    const { data: existing, error: checkErr } = await supabase
+      .from("suggestion_comments")
+      .select("id, user_id")
+      .eq("id", Number(commentId))
+      .eq("suggestion_id", suggestionId)
+      .maybeSingle();
 
-    const updatedComment: ApiComment = {
-      id: item.id,
-      suggestion_id: suggestionId,
-      content: item.content ?? "",
-      created_at: item.createdAt ?? new Date().toISOString(),
-      user: item.user ? { id: item.user.id, name: item.user.name, picture: item.user.picture ?? null } : null,
-      parent_id: item.parentId ?? null,
-      replies: [],
-    };
+    if (checkErr) {
+      console.error("Supabase query error:", checkErr);
+      return NextResponse.json({ error: checkErr.message }, { status: 500 });
+    }
+
+    if (!existing) {
+      return NextResponse.json({ error: "댓글을 찾을 수 없습니다." }, { status: 404 });
+    }
+
+    if (existing.user_id !== user_id) {
+      return NextResponse.json({ error: "본인의 댓글만 수정할 수 있습니다." }, { status: 403 });
+    }
+
+    // 2) 댓글 수정
+    const { data, error } = await supabase
+      .from("suggestion_comments")
+      .update({
+        content: content.trim(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", Number(commentId))
+      .select(`
+        id,
+        content,
+        created_at,
+        updated_at,
+        parent_id,
+        user_id,
+        users:users (
+          id,
+          name,
+          picture
+        )
+      `)
+      .single();
+
+    if (error) {
+      console.error("Supabase update error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const updatedComment = transformComment(data, suggestionId);
 
     return NextResponse.json(updatedComment);
   } catch (error: any) {
-    console.error("Comments PUT error:", error?.response?.data ?? error.message);
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Internal Server Error";
-    return NextResponse.json({ error: message }, { status });
+    console.error("Comments PUT error:", error?.message ?? error);
+    return NextResponse.json({ error: error?.message ?? "Internal Server Error" }, { status: 500 });
   }
 }
 
@@ -235,26 +287,65 @@ export async function DELETE(
       return NextResponse.json({ error: "댓글 ID가 필요합니다." }, { status: 400 });
     }
 
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
-
-    if (!cookieHeader) {
+    // 인증된 사용자 ID 가져오기
+    const user_id = await getCurrentUserId();
+    if (!user_id) {
       return NextResponse.json({ error: "인증이 필요합니다." }, { status: 401 });
     }
 
-    await backendClient.delete(
-      `/api/suggestions/${suggestionId}/comments/${commentId}`,
-      { headers: { Cookie: cookieHeader } }
-    );
+    const supabase = await getSupabaseServerClient();
+
+    // 1) 권한 확인 (본인 댓글인지)
+    const { data: existing, error: checkErr } = await supabase
+      .from("suggestion_comments")
+      .select("id, user_id")
+      .eq("id", Number(commentId))
+      .eq("suggestion_id", suggestionId)
+      .maybeSingle();
+
+    if (checkErr) {
+      console.error("Supabase query error:", checkErr);
+      return NextResponse.json({ error: checkErr.message }, { status: 500 });
+    }
+
+    if (!existing) {
+      return NextResponse.json({ error: "댓글을 찾을 수 없습니다." }, { status: 404 });
+    }
+
+    if (existing.user_id !== user_id) {
+      return NextResponse.json({ error: "본인의 댓글만 삭제할 수 있습니다." }, { status: 403 });
+    }
+
+    // 2) 댓글 삭제
+    const { error } = await supabase
+      .from("suggestion_comments")
+      .delete()
+      .eq("id", Number(commentId));
+
+    if (error) {
+      console.error("Supabase delete error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // 3) 댓글 카운트 감소
+    const { error: rpcErr } = await supabase.rpc("dec_suggestion_comment_count", { sid: suggestionId });
+    if (rpcErr) {
+      console.error("Comment count decrement error:", rpcErr);
+      // 카운트 감소 실패해도 댓글 삭제는 성공으로 처리
+    }
+
+    // 4) 캐시 무효화 - 댓글 개수 즉시 반영
+    try {
+      const { revalidatePath } = await import('next/cache');
+      revalidatePath(`/board/${suggestionId}`);
+      revalidatePath('/board');
+    } catch (e) {
+      console.error('Cache revalidation error:', e);
+    }
 
     return NextResponse.json({ message: "댓글이 삭제되었습니다." });
   } catch (error: any) {
-    console.error("Comments DELETE error:", error?.response?.data ?? error.message);
-    const status = error?.response?.status ?? 500;
-    const message = error?.response?.data?.message ?? error.message ?? "Internal Server Error";
-    return NextResponse.json({ error: message }, { status });
+    console.error("Comments DELETE error:", error?.message ?? error);
+    return NextResponse.json({ error: error?.message ?? "Internal Server Error" }, { status: 500 });
   }
 }

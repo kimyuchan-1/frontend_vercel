@@ -1,15 +1,14 @@
 import { Suspense } from "react";
 import PedAccClient from "./PedAccClient";
-import { backendClient } from "@/lib/backendClient";
 import { cookies } from "next/headers";
 
 // Enable ISR with 2 minutes revalidation
 export const revalidate = 120;
 
 interface PageProps {
-  searchParams: {
+  searchParams: Promise<{
     region?: string;
-  };
+  }>;
 }
 
 async function getAccidentData(region?: string) {
@@ -20,17 +19,24 @@ async function getAccidentData(region?: string) {
       .map((x) => `${x.name}=${x.value}`)
       .join("; ");
 
-    const params: Record<string, string> = {};
+    const params = new URLSearchParams();
     if (region && region.trim()) {
-      params.region = region.trim();
+      params.set('region', region.trim());
     }
 
-    const response = await backendClient.get("/api/pedacc/summary", {
-      params,
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const url = `${baseUrl}/api/pedacc/summary${params.toString() ? `?${params.toString()}` : ''}`;
+
+    const response = await fetch(url, {
       headers: cookieHeader ? { Cookie: cookieHeader } : {},
+      cache: 'no-store',
     });
 
-    const data = response.data;
+    if (!response.ok) {
+      throw new Error(`Failed to fetch: ${response.status}`);
+    }
+
+    const data = await response.json();
 
     // Transform backend response to frontend format
     const yearly = (data.yearly ?? []).map((item: any) => ({
@@ -61,7 +67,7 @@ async function getAccidentData(region?: string) {
       monthly,
     };
   } catch (error: any) {
-    console.error("Failed to fetch accident data:", error?.response?.data ?? error.message);
+    console.error("Failed to fetch accident data:", error?.message);
     // Return empty data on error
     return {
       region: null,
@@ -80,11 +86,18 @@ async function getProvinces() {
       .map((x) => `${x.name}=${x.value}`)
       .join("; ");
 
-    const response = await backendClient.get("/api/district/provinces", {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const response = await fetch(`${baseUrl}/api/district/provinces`, {
       headers: cookieHeader ? { Cookie: cookieHeader } : {},
+      cache: 'no-store',
     });
 
-    return response.data ?? [];
+    if (!response.ok) {
+      throw new Error(`Failed to fetch: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data ?? [];
   } catch (error: any) {
     console.error("Failed to fetch provinces:", error?.message);
     return [];
@@ -92,7 +105,8 @@ async function getProvinces() {
 }
 
 export default async function Page({ searchParams }: PageProps) {
-  const region = searchParams.region;
+  const params = await searchParams;
+  const region = params.region;
 
   // Fetch initial data on server in parallel
   const [accidentData, provinces] = await Promise.all([

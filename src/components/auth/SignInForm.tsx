@@ -4,9 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FcGoogle } from "react-icons/fc";
 import { FaGithub } from "react-icons/fa";
-import Image from "next/image";
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 export default function SignInForm() {
   const [credentials, setCredentials] = useState({ email: "", password: "" });
@@ -87,23 +84,23 @@ export default function SignInForm() {
         <span className='relative bg-white px-5 text-[#666] text-sm'>또는</span>
       </div>
 
-      <a href={`${BACKEND_URL}/oauth2/authorization/google`} className='inline-block w-full box-border p-3 rounded-lg text-base font-medium text-white no-underline transition-all duration-300 ease-in-out bg-[#4285f4] hover:bg-[#3367d6] hover:-translate-y-0.5 hover:shadow-[0_8px_25px_rgba(66,133,244,0.3)] active:translate-y-0'>
-        <span className='flex flex-row items-center justify-center'>
-          <FcGoogle />&nbsp;구글으로 로그인
-        </span>
-      </a>
+      <div className="space-y-3">
+        <a 
+          href="/api/oauth2/start/google" 
+          className="flex items-center justify-center w-full box-border p-3 rounded-lg text-base font-medium text-gray-700 no-underline transition-all duration-300 ease-in-out bg-white border-2 border-gray-300 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_8px_25px_rgba(0,0,0,0.1)] active:translate-y-0"
+        >
+          <FcGoogle className="w-5 h-5 mr-2" />
+          Google로 로그인
+        </a>
 
-      <a href={`${BACKEND_URL}/oauth2/authorization/naver`} className="inline-block w-full box-border p-3 mt-2.5 rounded-lg text-base font-medium text-white no-underline transition-all duration-300 ease-in-out bg-[#2DB400] hover:bg-[#16AA52] hover:-translate-y-0.5 hover:shadow-[0_8px_25px_rgba(45,180,0,0.3)] active:translate-y-0">
-        <span className='flex flex-row items-center justify-center'>
-          <Image src="/naver.svg" alt="naver logo" width={16} height={16} className='rounded-xs' />&nbsp;Naver로 로그인
-        </span>
-      </a>
-
-      <a href={`${BACKEND_URL}/oauth2/authorization/github`} className="inline-block w-full box-border p-3 mt-2.5 rounded-lg text-base font-medium text-white no-underline transition-all duration-300 ease-in-out bg-[#24292e] hover:bg-[#171515] hover:-translate-y-0.5 hover:shadow-[0_8px_25px_rgba(23,21,21,0.3)] active:translate-y-0 ">
-        <span className='flex flex-row items-center justify-center'>
-          <FaGithub />&nbsp;GitHub로 로그인
-        </span>
-      </a>
+        <a 
+          href="/api/oauth2/start/github" 
+          className="flex items-center justify-center w-full box-border p-3 rounded-lg text-base font-medium text-white no-underline transition-all duration-300 ease-in-out bg-[#24292e] hover:bg-[#1b1f23] hover:-translate-y-0.5 hover:shadow-[0_8px_25px_rgba(0,0,0,0.3)] active:translate-y-0"
+        >
+          <FaGithub className="w-5 h-5 mr-2" />
+          GitHub로 로그인
+        </a>
+      </div>
     </>
   );
 }

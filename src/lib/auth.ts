@@ -1,42 +1,65 @@
-import { cookies } from "next/headers";
-import { backendClient } from "@/lib/backendClient";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 
-export type AuthUser = {
-  id: string | null;
-  email: string | null;
-  name: string | null;
-  role: string | null;
-};
-
-export async function getAuthUser(): Promise<AuthUser | null> {
-  // Next(server) -> Spring Boot로 쿠키 수동 전달
-  const cookieStore = await cookies();
-  const cookieHeader = cookieStore
-    .getAll()
-    .map((c) => `${c.name}=${c.value}`)
-    .join("; ");
-
-  if (!cookieHeader) return null;
-
+/**
+ * 현재 인증된 사용자의 ID를 가져옵니다.
+ * @returns 사용자 ID (users 테이블의 id) 또는 null
+ */
+export async function getCurrentUserId(): Promise<number | null> {
   try {
-    const res = await backendClient.get("/api/auth/me", {
-      headers: { cookie: cookieHeader },
-      validateStatus: (s) => s >= 200 && s < 500,
-    });
+    const supabase = await getSupabaseServerClient();
 
-    if (res.status !== 200) return null;
+    // Supabase Auth에서 현재 사용자 확인
+    const { data: { user }, error } = await supabase.auth.getUser();
 
-    // 백엔드 응답 DTO에 맞춰 매핑
-    const payload = res.data ?? {};
-    const user = payload.data ?? {}; // ApiResponse의 data
+    if (error || !user?.email) {
+      return null;
+    }
 
-    return {
-      id: user.id?.toString?.() ?? user.id ?? null,
-      email: user.email ?? null,
-      name: user.name ?? null,
-      role: user.role ?? null,
-    };
-  } catch {
+    // users 테이블에서 실제 ID 조회
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("id")
+      .eq("email", user.email)
+      .maybeSingle();
+
+    if (userError || !userData) {
+      return null;
+    }
+
+    return userData.id;
+  } catch (err) {
+    console.error("getCurrentUserId error:", err);
+    return null;
+  }
+}
+
+/**
+ * 현재 인증된 사용자 정보를 가져옵니다.
+ * @returns 사용자 정보 또는 null
+ */
+export async function getCurrentUser() {
+  try {
+    const supabase = await getSupabaseServerClient();
+
+    const { data: { user }, error } = await supabase.auth.getUser();
+
+    if (error || !user?.email) {
+      return null;
+    }
+
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("id, email, name, picture, role, created_at")
+      .eq("email", user.email)
+      .maybeSingle();
+
+    if (userError || !userData) {
+      return null;
+    }
+
+    return userData;
+  } catch (err) {
+    console.error("getCurrentUser error:", err);
     return null;
   }
 }

@@ -142,14 +142,20 @@ export default function LocationInfoPanel({ lat, lon, address, onPriorityScoreCa
         // console.log('[LocationInfoPanel] Response status:', response.status);
         
         if (response.ok) {
-          const result = await response.json();
-          // console.log('[LocationInfoPanel] API Response:', result);
+          const data = await response.json();
+          // console.log('[LocationInfoPanel] API Response:', data);
           
-          const data = result.success ? result.data : [];
-          // console.log('[LocationInfoPanel] Extracted data:', data);
-          // console.log('[LocationInfoPanel] Data length:', Array.isArray(data) ? data.length : 'not array');
-          
-          setNearbyAccidents(Array.isArray(data) ? data : []);
+          // API가 배열을 직접 반환하는 경우
+          if (Array.isArray(data)) {
+            setNearbyAccidents(data);
+          }
+          // API가 { success: true, data: [] } 형식으로 반환하는 경우
+          else if (data?.success && Array.isArray(data.data)) {
+            setNearbyAccidents(data.data);
+          }
+          else {
+            setNearbyAccidents([]);
+          }
         } else {
           const errorText = await response.text();
           console.error('[LocationInfoPanel] Error response:', errorText);

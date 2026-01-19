@@ -3,8 +3,8 @@ import SuggestionDetailClient from './SuggestionDetailClient';
 import type { Suggestion } from '@/features/board/types';
 import type { Metadata } from 'next';
 
-// ISR: Revalidate every 60 seconds
-export const revalidate = 60;
+// Force dynamic rendering to always show latest view_count
+export const dynamic = 'force-dynamic';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -14,7 +14,7 @@ async function getSuggestion(id: string): Promise<Suggestion | null> {
   try {
     const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
     const response = await fetch(`${baseUrl}/api/suggestions/${id}`, {
-      next: { revalidate: 60 }, // ISR: Cache for 60 seconds
+      cache: 'no-store', // Always fetch fresh data
       headers: {
         'Content-Type': 'application/json',
       },

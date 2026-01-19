@@ -3,7 +3,6 @@
  * Extracted for testability
  */
 
-import axios from 'axios';
 import { cookies } from 'next/headers';
 
 export interface KPIData {
@@ -75,35 +74,14 @@ export function getFallbackKPIData(): KPIData {
   };
 }
 
-export function validateBackendUrl(url: string | undefined): string | null {
-  if (!url || url.trim() === '') {
-    if (url === '') {
-      console.error(`[${new Date().toISOString()}] [Dashboard KPI] Configuration error: NEXT_PUBLIC_BACKEND_URL is empty`);
-    } else {
-      console.error(`[${new Date().toISOString()}] [Dashboard KPI] Configuration error: NEXT_PUBLIC_BACKEND_URL is not set`);
-    }
-    return null;
-  }
-
-  try {
-    new URL(url);
-    return url;
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] [Dashboard KPI] Configuration error: NEXT_PUBLIC_BACKEND_URL is not a valid URL: ${url}`);
-    return null;
-  }
-}
-
 export async function getKPIData(): Promise<KPIData> {
   const timestamp = new Date().toISOString();
   
-  // Validate environment configuration
-  const backendUrl = validateBackendUrl(process.env.NEXT_PUBLIC_BACKEND_URL);
-  if (!backendUrl) {
-    return getFallbackKPIData();
-  }
-
   try {
+    // Use internal API route instead of external backend URL
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const apiUrl = `${baseUrl}/api/dashboard/kpi`;
+
     // Retrieve cookies from Next.js
     const cookieStore = await cookies();
     const cookieHeader = cookieStore
@@ -111,59 +89,29 @@ export async function getKPIData(): Promise<KPIData> {
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join('; ');
 
-    // Create axios instance with proper configuration
-    const backendClient = axios.create({
-      baseURL: backendUrl,
-      timeout: 15000,
+    // Make request to internal API
+    const response = await fetch(apiUrl, {
       headers: {
         'Accept': 'application/json',
         ...(cookieHeader && { 'Cookie': cookieHeader }),
       },
+      cache: 'no-store',
     });
 
-    // Make direct request to backend API
-    const response = await backendClient.get('/api/dashboard/kpi');
+    if (!response.ok) {
+      console.error(`[${timestamp}] [Dashboard KPI] HTTP error: ${response.status}`);
+      console.error(`  URL: ${apiUrl}`);
+      console.error(`  Status: ${response.status}`);
+      return getFallbackKPIData();
+    }
 
     // Validate and normalize response data
-    const payload = response.data;
+    const payload = await response.json();
     return normalizeKpiPayload(payload);
 
   } catch (error: any) {
-    // Determine error type and log appropriately
-    if (axios.isAxiosError(error)) {
-      if (error.code === 'ECONNABORTED') {
-        // Timeout error
-        console.error(`[${timestamp}] [Dashboard KPI] Timeout error`);
-        console.error(`  URL: ${backendUrl}/api/dashboard/kpi`);
-        console.error(`  Details: Request timed out after 15000ms`);
-      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
-        // Network error
-        console.error(`[${timestamp}] [Dashboard KPI] Network error: ${error.code}`);
-        console.error(`  URL: ${backendUrl}/api/dashboard/kpi`);
-        console.error(`  Details: ${error.message}`);
-      } else if (error.response) {
-        // HTTP error (4xx, 5xx)
-        console.error(`[${timestamp}] [Dashboard KPI] HTTP error: ${error.response.status}`);
-        console.error(`  URL: ${backendUrl}/api/dashboard/kpi`);
-        console.error(`  Status: ${error.response.status}`);
-        console.error(`  Message: ${error.response.data?.message || error.response.statusText || 'No error message'}`);
-      } else {
-        // Other axios error
-        console.error(`[${timestamp}] [Dashboard KPI] Request error`);
-        console.error(`  URL: ${backendUrl}/api/dashboard/kpi`);
-        console.error(`  Details: ${error.message}`);
-      }
-    } else if (error instanceof SyntaxError) {
-      // JSON parsing error
-      console.error(`[${timestamp}] [Dashboard KPI] Parse error: Invalid JSON response`);
-      console.error(`  URL: ${backendUrl}/api/dashboard/kpi`);
-      console.error(`  Details: ${error.message}`);
-    } else {
-      // Unknown error
-      console.error(`[${timestamp}] [Dashboard KPI] Unknown error`);
-      console.error(`  URL: ${backendUrl}/api/dashboard/kpi`);
-      console.error(`  Details: ${error?.message || String(error)}`);
-    }
+    console.error(`[${timestamp}] [Dashboard KPI] Error fetching KPI data`);
+    console.error(`  Details: ${error?.message || String(error)}`);
 
     // Always return fallback data on error
     return getFallbackKPIData();

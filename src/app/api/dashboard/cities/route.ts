@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { backendClient } from "@/lib/backendClient";
+import { getSupabaseServerClient, getSupabaseServiceClient } from "@/lib/supabase/server";
+
+type Row = {
+  bjd_nm: string;
+  center_lati: number;
+  center_long: number;
+};
+
+function tokens2(name: string) {
+  const t = String(name ?? "").trim().split(/\s+/);
+  return { province: t[0] ?? "", city: t[1] ?? "" };
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -11,26 +21,63 @@ export async function GET(request: Request) {
   }
 
   try {
-    const c = await cookies();
-    const cookieHeader = c
-      .getAll()
-      .map((x) => `${x.name}=${x.value}`)
-      .join("; ");
+    // Use service client to bypass RLS
+    const supabase = getSupabaseServiceClient();
 
-    const response = await backendClient.get("/api/dashboard/cities", {
-      params: { province: province.trim() },
-      headers: cookieHeader ? { Cookie: cookieHeader } : {},
-    });
+    // province로 시작하는 bjd_nm만 가져오면 데이터가 훨씬 줄어듦
+    const { data, error } = await supabase
+      .from("District_with_lat_lon")
+      .select("bjd_nm, center_lati, center_long")
+      .like("bjd_nm", `${province.trim()} %`)
+      .limit(100000);
 
-    return NextResponse.json(response.data, { status: response.status });
+    if (error) {
+      console.error("[Dashboard Cities API] Supabase error:", error);
+      console.error("[Dashboard Cities API] Error details:", {
+        message: error.message,
+        details: (error as any).details,
+        hint: (error as any).hint,
+        code: (error as any).code,
+      });
+      return NextResponse.json([], { status: 200 }); // Return empty array instead of error
+    }
+
+    const rows = (data ?? []) as Row[];
+
+    // city(시군구) 단위로 centroid
+    const acc = new Map<string, { sumLat: number; sumLon: number; n: number }>();
+
+    for (const r of rows) {
+      const { province: prov, city } = tokens2(r.bjd_nm);
+      if (prov !== province.trim()) continue;
+      if (!city) continue;
+
+      const lat = Number(r.center_lati);
+      const lon = Number(r.center_long);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      if (!acc.has(city)) acc.set(city, { sumLat: 0, sumLon: 0, n: 0 });
+      const a = acc.get(city)!;
+      a.sumLat += lat;
+      a.sumLon += lon;
+      a.n += 1;
+    }
+
+    const out = Array.from(acc.entries())
+      .map(([city, a]) => ({
+        city,
+        lat: a.sumLat / a.n,
+        lon: a.sumLon / a.n,
+        // 드롭다운 key로 쓰기 좋게 province+city를 결합
+        key: `${province.trim()}|${city}`,
+      }))
+      .sort((x, y) => x.city.localeCompare(y.city, "ko"));
+
+    return NextResponse.json(out);
 
   } catch (error: any) {
-
     console.error("[Dashboard Cities API] Error:", error.message);
     
-    return NextResponse.json(
-      { error: error.response?.data?.message || "Failed to fetch cities" },
-      { status: error.response?.status || 500 }
-    );
+    return NextResponse.json([], { status: 200 }); // Return empty array instead of error
   }
 }
